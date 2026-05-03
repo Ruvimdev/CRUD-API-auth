@@ -1,0 +1,38 @@
+
+services:
+  #база данных
+  db:
+    image: postgres:16-alpine
+    container_name: golang_pgress_db
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD} 
+    ports: 
+     - "5433:5432"
+    volumes: 
+     - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+     test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+     interval: 5s
+     timeout: 5s
+     retries: 5
+
+
+  app: 
+    build: .
+    container_name: golang_pgress_app
+    ports:
+     - "8080:8080"
+    depends_on:
+     db:
+      condition: service_healthy
+    environment:
+      - DB_USER=${DB_USER}
+      - DB_NAME=${DB_NAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db #внутри сети докер обращаемся к базе по имени сервиса
+      - DB_PORT=5432
+  
+volumes:
+  postgres_data:
