@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"golang-pgress/internal/models"
 	"golang-pgress/internal/storage"
@@ -47,11 +49,24 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newID, err := h.databaseLayer.CreateTask(r.Context(), UserTastText.TaskText)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	
+	defer cancel()
+
+	newID, err := h.databaseLayer.CreateTask(ctx, UserTastText.TaskText)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "ошибка сохранения в базу")
 		return
 	}
+
+	//горутина
+	go func (taskText string)  {
+		// bgCtx := context.Background()
+		
+		time.Sleep(5 * time.Second)
+
+		println("ФОНОВАЯ ЗАДАЧА: Уведомление о задаче '" + taskText + "' успешно отправлено!")
+	}(UserTastText.TaskText)
 
 	response := map[string]interface{} {
 		"message": "задача успешно создана",
@@ -64,7 +79,11 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetTasks(w http.ResponseWriter, r *http.Request) {
 	
-	tasks, err := h.databaseLayer.GetAllTasks(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	
+	defer cancel()
+
+	tasks, err := h.databaseLayer.GetAllTasks(ctx)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "ошибка получении данных с бд ")
 		return
@@ -92,7 +111,10 @@ func (h *Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.databaseLayer.DeleteTask(r.Context(), id)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	result, err := h.databaseLayer.DeleteTask(ctx, id)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "ошибка удаления с базы")
 		return
@@ -113,7 +135,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusBadRequest, "ошибка получения айди")
 		return
 	}
-	
+
 	var input models.UpdateTaskInput
 	err = json.NewDecoder(r.Body).Decode(&input)
 	if err != nil {
@@ -126,7 +148,10 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updatedStatus, err := h.databaseLayer.UpdateTask(r.Context(), input.Status, id)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	updatedStatus, err := h.databaseLayer.UpdateTask(ctx, input.Status, id)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "ошибка обновления информации в базе")
 		return

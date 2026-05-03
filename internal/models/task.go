@@ -7,7 +7,7 @@ type Task struct {
 }
 
 type IncomingTask struct {
-	TaskText   string	  `json:"task_text"`
+	TaskText   string	  `json:"tasktext"`
 }
 
 type UpdateTaskInput struct {

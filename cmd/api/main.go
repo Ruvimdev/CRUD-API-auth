@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -74,9 +78,37 @@ func main() {
 		r.Patch("/{id}", h.UpdateTask)
 
 	})
-	slog.Info("сервер запущен", "port", "8080")
+	srv := &http.Server{
+		Addr: 	 ":8080",
+		Handler: r,
+	}
 
-	http.ListenAndServe(":8080", r)
+	//sigint = ctrl+c - os посилает процессу сигнал sigint(завершить процесс),
+	//sigterm - деплой система останавливает контейнер этим сигналом 
+	//канал получает уведомление ос 
+	//канал - труба между горутинами, 1 = буффер на сигнал 
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) //пришел сигнал - клади в канал
+
+	//сервер в горутине что бы не блокировать
+	go func() {
+		slog.Info("server launched", "port", "8080")
+		err := srv.ListenAndServe() //программа висит тут 
+		if err != nil && err != http.ErrServerClosed {
+			slog.Error("ошибка сервера", "error", err)
+			os.Exit(1)
+		}
+	}()
+	<-quit //блокируемся тут, код ниже будет выполнен после того как придет сигнал в канал
+	slog.Info("останавливаем сервер...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("ошибка при осатановке", "error", err)
+	}
+	slog.Info("сервер остановлен")
 }
 
 
