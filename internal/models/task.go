@@ -7,9 +7,10 @@ type Task struct {
 }
 
 type IncomingTask struct {
-	TaskText   string	  `json:"tasktext"`
+	TaskText   string	  `json:"tasktext" validate:"required,min=3"`
 }
 
 type UpdateTaskInput struct {
-	Status 	   string     `json:"status"`
+											//oneof принимающие только эти слова, остальное ошибка
+	Status 	   string     `json:"status" validate:"required,oneof=active done"`
 }
