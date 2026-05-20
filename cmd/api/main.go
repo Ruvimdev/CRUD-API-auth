@@ -13,11 +13,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
+	"github.com/swaggo/http-swagger"
 	_ "github.com/lib/pq" // Тот самый драйвер с нижним подчеркиванием
+	_ "golang-pgress/docs"
 
 	"golang-pgress/internal/config"
 	"golang-pgress/internal/handlers"
+	"golang-pgress/internal/services"
 	"golang-pgress/internal/storage"
 )
 
@@ -29,7 +33,11 @@ import (
 // }
 
 
-
+// @title Task Manager API
+// @version 1.0
+// @description API для управления задачами и категориями
+// @host localhost:8080
+// @BasePath /
 func main() {
 	//логгер
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -61,29 +69,69 @@ func main() {
 	}
 	slog.Info("успешно подключение")
 
+	//создали канал
+	taskChan := make(chan string, 10)
+	//запустили воркера в фоне
+	go services.EmailWorker(taskChan)
+
 	//3 собираем архитектуру, dependency injection
 	store := storage.NewStorage(db)
-	h := handlers.NewHandler(store)
+	service := services.NewAuthService(store, cfg)
+	h := handlers.NewHandler(store, service, taskChan)
 	
+
 	//chi роутер
 	r := chi.NewRouter()
+
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST","PUT","PATCH","DELETE","OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
 	r.Use(middleware.Logger)//встроенный логер
 	r.Use(middleware.Recoverer)// защита от краша
 
-	r.Route("/tasks", func(r chi.Router) {
-		r.Get("/", h.GetTasks)
-		r.Post("/", h.CreateTask)
-		r.Delete("/{id}", h.DeleteTask)
-		r.Patch("/{id}", h.UpdateTask)
+	// ---ПУБЛИЧНЫЕ РОУТЫ (без защиты)----
+	r.Post("/register", h.RegisterUser)
+	r.Post("/login", h.LoginUser)
+	r.Get("/swagger/*", httpSwagger.WrapHandler) //swagger ui
+
+	//---- ПРИВАТНЫЕ РОУТЫ (под защитой) ----
+	//r.Group создает изолированную группу, где работают свои правила
+	r.Group(func(r chi.Router) {
+	    //охранник на всю эту группу
+		//передаем секретный ключ из конфига
+		r.Use(handlers.AuthMiddleware(cfg.JWTSecret))
+
+		//эти роуты требуют токен
+		r.Route("/tasks", func(r chi.Router) {
+			r.Get("/", h.GetTasks)
+			r.Post("/", h.CreateTask)
+			r.Delete("/{id}", h.DeleteTask)
+			r.Patch("/{id}", h.UpdateTask)
+		})
+
+		r.Route("/categories", func(r chi.Router) {
+			r.Post("/", h.CreateCategory)
+			r.Get("/", h.GetCategory)
+		})
 
 	})
+
+
+
+//GRACEFUL SHUTDOWN 
+
 	srv := &http.Server{
 		Addr: 	 ":8080",
 		Handler: r,
 	}
 
-	//sigint = ctrl+c - os посилает процессу сигнал sigint(завершить процесс),
+	//sigint = ctrl+c - os посылает процессу сигнал sigint(завершить процесс),
 	//sigterm - деплой система останавливает контейнер этим сигналом 
 	//канал получает уведомление ос 
 	//канал - труба между горутинами, 1 = буффер на сигнал 
@@ -94,7 +142,7 @@ func main() {
 	go func() {
 		slog.Info("server launched", "port", "8080")
 		err := srv.ListenAndServe() //программа висит тут 
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && err != http.ErrServerClosed { //ErrServerClosed - штатное завершение работы(srv.shutdown())
 			slog.Error("ошибка сервера", "error", err)
 			os.Exit(1)
 		}
