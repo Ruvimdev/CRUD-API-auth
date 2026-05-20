@@ -62,11 +62,15 @@ func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 			}
 			//float64, json числа по умолчанию парсятся как float
 			//обращаемся к мапе по ключу: claims["user_id"]
-			userID := int(claims["user_id"].(float64))
+			rawID, ok := claims["user_id"]
+			if !ok {
+				sendError(w, http.StatusUnauthorized, "невалидный токен")
+				return 
+			}
 
 			//4. кладем id юзера в контекст
 			// берем старый контекст, кладем туда userID и получаем новый контекст
-			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			ctx := context.WithValue(r.Context(), UserIDKey, rawID)
 
 			//5. пропускаем запрос дальше, отдаем новый контекст с айди
 			next.ServeHTTP(w, r.WithContext(ctx))
