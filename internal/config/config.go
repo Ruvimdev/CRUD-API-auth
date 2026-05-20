@@ -10,6 +10,7 @@ type Config struct {
 	DBPassword string
 	DBPort     string 
 	AppPort    string
+	JWTSecret  string
 }
 
 func LoadConfig() *Config {
@@ -20,6 +21,6 @@ func LoadConfig() *Config {
 		DBPassword: os.Getenv("DB_PASSWORD"),
 		DBPort: os.Getenv("DB_PORT"),
 		AppPort: os.Getenv("APP_PORT"),
-
+		JWTSecret: os.Getenv("JWT_SECRET"),
 	}
 }
