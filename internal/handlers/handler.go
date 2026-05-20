@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -16,16 +17,18 @@ import (
 )
 
 type Handler struct {
-	databaseLayer storage.TaskStorage
-	AuthService   *services.AuthService
-	validator     *validator.Validate
+	databaseLayer   	storage.TaskStorage
+	authService     	*services.AuthService
+	validator       	*validator.Validate
+	emailChan chan		string
 }
 
-func NewHandler(s storage.TaskStorage, auth *services.AuthService)	*Handler  {
+func NewHandler(s storage.TaskStorage, auth *services.AuthService, taskChan chan string) *Handler  {
 	return &Handler{
 		databaseLayer: s,
-		AuthService: auth,
+		authService: auth,
 		validator: validator.New(),
+		emailChan: taskChan,
 	}
 }
 
@@ -68,14 +71,12 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//горутина
-	go func (taskText string)  {
-		// bgCtx := context.Background()
-		
-		time.Sleep(5 * time.Second)
-
-		println("ФОНОВАЯ ЗАДАЧА: Уведомление о задаче '" + taskText + "' успешно отправлено!")
-	}(UserTastText.TaskText)
+	//worker
+	select {
+	case h.emailChan <- UserTastText.TaskText:
+	default:
+		slog.Warn("email queue full, skipping")
+	}
 
 	response := map[string]interface{} {
 		"message": "задача успешно создана",
@@ -87,6 +88,23 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 
 func (h *Handler) GetTasks(w http.ResponseWriter, r *http.Request) {
+	pageNumber := 1
+	limit := 10
+
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			pageNumber = p 
+		}
+	}
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l ,err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	offset := (pageNumber - 1) * limit
+
 	
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
@@ -97,7 +115,7 @@ func (h *Handler) GetTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := h.databaseLayer.GetAllTasks(ctx, userID)
+	tasks, err := h.databaseLayer.GetAllTasks(ctx, userID, limit, offset)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "ошибка получении данных с бд ")
 		return
@@ -160,7 +178,9 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 
 	var input models.UpdateTaskInput
 	err = json.NewDecoder(r.Body).Decode(&input)
-	
+	if err != nil {
+		sendError(w, http.StatusBadRequest, "ошибка декодирования")
+	}
 	if err := h.validator.Struct(input); err != nil {
 		sendError(w, http.StatusBadRequest, "ошибка валидации данных")
 		return
@@ -172,6 +192,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(UserIDKey).(int)
 	if !ok {
 		sendError(w, http.StatusUnauthorized, "не авторизован")
+		return
 	}
 
 	updatedStatus, err := h.databaseLayer.UpdateTask(ctx, input.Status, id, userID)
@@ -227,7 +248,16 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	sendJson(w, http.StatusOK, response)
 } 
 
-
+// @Summary Регистрация пользователя
+// @Description Создает нового пользователя в базе
+// @Tags Auth
+// @Accept  json
+// @Produce  json
+// @Param input body models.RegisterInput true "данные для регистрации"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /register [post]
 func (h *Handler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	var UserRegisterData models.RegisterInput
 
@@ -243,7 +273,7 @@ func (h *Handler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userId, err := h.AuthService.RegisterUser(r.Context(), UserRegisterData.Email, UserRegisterData.Password)
+	userId, err := h.authService.RegisterUser(r.Context(), UserRegisterData.Email, UserRegisterData.Password)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "ошибка сохранения в базу")
 		return
@@ -270,7 +300,7 @@ func (h *Handler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.AuthService.LoginUser(r.Context(), UserLoginData.Email, UserLoginData.Password)
+	token, err := h.authService.LoginUser(r.Context(), UserLoginData.Email, UserLoginData.Password)
 	if err != nil {
 		sendError(w, http.StatusUnauthorized, "неверная почта или пароль")
 		return
@@ -300,8 +330,7 @@ func (h *Handler) GetCategory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if categories == nil {
-		sendError(w, http.StatusBadRequest, "у вас нет категорий")
-		return
+		categories = []models.Category{}
 	} 
 
 	response := map[string]interface{} {
