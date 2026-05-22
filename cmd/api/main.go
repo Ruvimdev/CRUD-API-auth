@@ -16,7 +16,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
 	"github.com/swaggo/http-swagger"
-	_ "github.com/lib/pq" // Тот самый драйвер с нижним подчеркиванием
+	_ "github.com/lib/pq" 
 	_ "golang-pgress/docs"
 
 	"golang-pgress/internal/config"
@@ -43,18 +43,17 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 	
-	//енв
+
 	if err := godotenv.Load(); err != nil {
 		slog.Error("ошибка чтения .env файла", "error", err)
 	}
 	
-	//конфиг
+
 	cfg := config.LoadConfig()
 	connStr := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=disable password=%s", 
 			cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBName, cfg.DBPassword)
 
 
-	//2 открываем соединенние 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		slog.Error("ошибка инициализации", "error", err)
@@ -69,18 +68,18 @@ func main() {
 	}
 	slog.Info("успешно подключение")
 
-	//создали канал
+
 	taskChan := make(chan string, 10)
-	//запустили воркера в фоне
+
 	go services.EmailWorker(taskChan)
 
-	//3 собираем архитектуру, dependency injection
+	//DI
 	store := storage.NewStorage(db)
 	service := services.NewAuthService(store, cfg)
 	h := handlers.NewHandler(store, service, taskChan)
 	
 
-	//chi роутер
+
 	r := chi.NewRouter()
 
 	r.Use(cors.Handler(cors.Options{
@@ -92,22 +91,19 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	r.Use(middleware.Logger)//встроенный логер
+	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)// защита от краша
 
-	// ---ПУБЛИЧНЫЕ РОУТЫ (без защиты)----
+	// ---PUBLIC ROUTES----
 	r.Post("/register", h.RegisterUser)
 	r.Post("/login", h.LoginUser)
 	r.Get("/swagger/*", httpSwagger.WrapHandler) //swagger ui
 
-	//---- ПРИВАТНЫЕ РОУТЫ (под защитой) ----
-	//r.Group создает изолированную группу, где работают свои правила
+	//---- PRIVATE ROUTES ----
 	r.Group(func(r chi.Router) {
-	    //охранник на всю эту группу
-		//передаем секретный ключ из конфига
 		r.Use(handlers.AuthMiddleware(cfg.JWTSecret))
 
-		//эти роуты требуют токен
+		//needs token
 		r.Route("/tasks", func(r chi.Router) {
 			r.Get("/", h.GetTasks)
 			r.Post("/", h.CreateTask)
@@ -131,23 +127,19 @@ func main() {
 		Handler: r,
 	}
 
-	//sigint = ctrl+c - os посылает процессу сигнал sigint(завершить процесс),
-	//sigterm - деплой система останавливает контейнер этим сигналом 
-	//канал получает уведомление ос 
-	//канал - труба между горутинами, 1 = буффер на сигнал 
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) //пришел сигнал - клади в канал
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) 
 
-	//сервер в горутине что бы не блокировать
+
 	go func() {
 		slog.Info("server launched", "port", "8080")
-		err := srv.ListenAndServe() //программа висит тут 
-		if err != nil && err != http.ErrServerClosed { //ErrServerClosed - штатное завершение работы(srv.shutdown())
+		err := srv.ListenAndServe() 
+		if err != nil && err != http.ErrServerClosed { 
 			slog.Error("ошибка сервера", "error", err)
 			os.Exit(1)
 		}
 	}()
-	<-quit //блокируемся тут, код ниже будет выполнен после того как придет сигнал в канал
+	<-quit 
 	slog.Info("останавливаем сервер...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
